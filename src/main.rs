@@ -2,7 +2,7 @@ use std::error::Error;
 use std::net::{TcpListener, TcpStream};
 use std::io::{Read, Write};
 
-fn process( stream: &mut TcpStream) -> Result<String, Box<dyn Error>> {
+fn process(stream: &mut TcpStream) -> Result<String, Box<dyn Error>> {
     let mut buffer = [0; 1024];
 
     let read_result = stream.read(&mut buffer)?;
@@ -15,11 +15,23 @@ fn process( stream: &mut TcpStream) -> Result<String, Box<dyn Error>> {
     let parts: Vec<&str> = result_string.split("\r\n").collect();
     let first_line: Vec<&str> = parts[0].split(" ").collect();
     let path = first_line[1];
-    match path{
+    match path {
         "/" => {
             Ok("HTTP/1.1 200 OK\r\n\r\n".to_string())
         }
         _ => {
+            let path_start : Vec<&str> = path.split("/").collect();
+            if path_start[1] == "echo" {
+                let param = path_start[2];
+                let param_len = param.len();
+                return Ok(
+                    format!(
+                    "HTTP/1.1 200 OK\r\n\
+                    Content-Type: text/plain\r\n\
+                    Content-Length: {param_len}\r\n\r\n\
+                    {param}"
+                    ).to_string());
+            }
             Ok("HTTP/1.1 404 NOT FOUND\r\n\r\n".to_string())
         }
     }
@@ -35,13 +47,6 @@ fn main() {
         if let Ok(response) = process(&mut new_stream) {
             new_stream.write_all(response.as_bytes()).unwrap()
         }
-
-
-
         println!("accepted new connection");
-
-
-
-
     }
 }
