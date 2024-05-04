@@ -2,6 +2,16 @@ use std::error::Error;
 use std::net::{TcpListener, TcpStream};
 use std::io::{Read, Write};
 
+fn resp200(content: &str) -> String {
+    let content_len = content.len();
+    return format!(
+        "HTTP/1.1 200 OK\r\n\
+                    Content-Type: text/plain\r\n\
+                    Content-Length: {content_len}\r\n\r\n\
+                    {content}"
+    ).to_string();
+}
+
 fn process(stream: &mut TcpStream) -> Result<String, Box<dyn Error>> {
     let mut buffer = [0; 1024];
 
@@ -15,31 +25,31 @@ fn process(stream: &mut TcpStream) -> Result<String, Box<dyn Error>> {
     let parts: Vec<&str> = result_string.split("\r\n").collect();
     let first_line: Vec<&str> = parts[0].split(" ").collect();
     let path = first_line[1];
+    let user_agent_line = parts[2];
+    let user_agent: &str = user_agent_line.split(" ").collect::<Vec<&str>>()[1];
     match path {
         "/" => {
             Ok("HTTP/1.1 200 OK\r\n\r\n".to_string())
         }
         _ => {
-            let path_start : Vec<&str> = path.split("/").collect();
-            if path_start[1] == "echo" {
-                let param = path_start[2];
-                let param_len = param.len();
-                return Ok(
-                    format!(
-                    "HTTP/1.1 200 OK\r\n\
-                    Content-Type: text/plain\r\n\
-                    Content-Length: {param_len}\r\n\r\n\
-                    {param}"
-                    ).to_string());
-            }
-            Ok("HTTP/1.1 404 NOT FOUND\r\n\r\n".to_string())
+            let path_segments: Vec<&str> = path.split("/").collect();
+            let path_start = path_segments[1];
+            return match path_start {
+                "echo" => {
+                    let param = path_segments[2];
+                    return Ok(resp200(param));
+                }
+                "user-agent" => {
+                    return Ok(
+                        resp200(user_agent));
+                }
+                _ => { Ok("HTTP/1.1 404 NOT FOUND\r\n\r\n".to_string()) }
+            };
         }
     }
 }
 
 fn main() {
-    println!("Logs from your program will appear here!");
-
     let listener = TcpListener::bind("127.0.0.1:4221").unwrap();
 
     for stream in listener.incoming() {
