@@ -2,16 +2,22 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::net::{TcpListener, TcpStream};
 use std::io::{Read, Write};
-use std::thread;
+use std::{env, fs, thread};
 
-fn resp200(content: &str) -> String {
+fn resp200(content: &str, content_type: Option<&str>) -> String {
+    let content_type = content_type.unwrap_or("text/plain");
     let content_len = content.len();
     return format!(
         "HTTP/1.1 200 OK\r\n\
-                    Content-Type: text/plain\r\n\
-                    Content-Length: {content_len}\r\n\r\n\
-                    {content}"
+        Content-Type: {content_type}\r\n\
+        Content-Length: {content_len}\r\n\
+        \r\n\
+        {content}"
     ).to_string();
+}
+
+fn resp404() -> String {
+    "HTTP/1.1 404 NOT FOUND\r\n\r\n".to_string()
 }
 
 #[derive(Debug)]
@@ -38,9 +44,9 @@ fn parse_request(request_string: &str) -> Request {
     let m: HashMap<&str, &str> = lines[1..].iter().map(|line|
         line.trim().split(": ").collect()
     ).filter(
-        |line_parts : &Vec<&str>| {
+        |line_parts: &Vec<&str>| {
             debug_assert!(line_parts.len() == 2, "Invalid request line: {}", line_parts[0]);
-            return line_parts.len() == 2
+            return line_parts.len() == 2;
         }
     ).map(
         |line_parts|
@@ -60,7 +66,7 @@ fn parse_request(request_string: &str) -> Request {
     };
 }
 
-fn process(stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
+fn handle(stream: &mut TcpStream, directory: Option<String>) -> Result<(), Box<dyn Error>> {
     let mut buffer = [0; 1024];
 
     let read_result = stream.read(&mut buffer)?;
@@ -76,26 +82,40 @@ fn process(stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
         _ => {
             let path_segments: Vec<&str> = request.path.split("/").collect();
             let path_start = path_segments[1];
+            let params = &path_segments[2..];
             println!("Path start {}", path_start);
             match path_start {
                 "echo" => {
-                    let param = path_segments[2];
-                    resp200(param)
+                    resp200(params[0], None)
                 }
                 "user-agent" => {
                     println!("User-Agent: {:?}", request.user_agent);
                     match request.user_agent {
                         Some(ua) => {
-                            resp200(ua.as_str())
+                            resp200(ua.as_str(), None)
                         }
                         None => {
-                            "HTTP/1.1 404 NOT FOUND\r\n\r\n".to_string()
+                            resp404()
                         }
                     }
                 }
-                _ => { "HTTP/1.1 404 NOT FOUND\r\n\r\n".to_string() }
+                "files" => {
+                    let file_path = format!("{}/{}", directory.unwrap(), params[0]);
+
+                    match fs::read_to_string(file_path) {
+                        Ok(file_contents) => {
+                            resp200(file_contents.as_str(), Some("application/octet-stream"))
+                        }
+                        Err(err) => {
+                            println!("Error reading file: {}", err);
+                            resp404()
+                        }
+                    }
+                        // .expect("Should have been able to read the file");
+
+                }
+                _ => { resp404() }
             }
-            // "HTTP/1.1 404 NOT FOUND\r\n\r\n".to_string()
         }
     };
     stream.write_all(response.as_bytes()).unwrap();
@@ -103,14 +123,24 @@ fn process(stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
 }
 
 fn main() {
+    println!("Starting server!");
+    let args: Vec<String> = env::args().collect();
+
+    // Assume for now that directory is the third argument
+    let directory = match args.len() {
+        3 => Some(&args[2]),
+        _ => None,
+    };
+
     let listener = TcpListener::bind("127.0.0.1:4221").unwrap();
     // Debug
     // let listener = TcpListener::bind("127.0.0.1:4222").unwrap();
 
     for stream in listener.incoming() {
         let mut new_stream = stream.unwrap();
+        let cloned_directory: Option<String> = directory.cloned();
         thread::spawn(move || {
-            let _ = process(&mut new_stream);
+            let _ = handle(&mut new_stream, cloned_directory);
         });
         println!("accepted new connection");
     }
