@@ -35,12 +35,14 @@ pub fn parse_request(request_string: &str) -> Request {
         Some(ua) => Some(ua.to_string()),
         None => None,
     };
-    let encoding = m.get("Accept-Encoding").and_then(|&ua| {
-        if ua == "gzip" {
-            Some(Encoding::Gzip)
-        } else {
-            None
-        }
+    let encoding = m.get("Accept-Encoding").and_then(|&enc| {
+        enc.split(",").map(
+            |enc| enc.trim().to_lowercase()
+        ).find(
+            |enc| enc == "gzip"
+        ).map(
+            |_| Encoding::Gzip
+        )
     });
     let body = match http_method {
         HttpMethod::GET => None,
