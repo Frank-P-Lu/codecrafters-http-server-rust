@@ -1,96 +1,12 @@
-use std::collections::HashMap;
 use std::error::Error;
 use std::net::{TcpListener, TcpStream};
 use std::io::{Read, Write};
 use std::{env, fs, thread};
+use request::HttpMethod;
+use crate::response::Response;
 
-fn resp201() -> String {
-    return "HTTP/1.1 201 OK\r\n\r\n".to_string();
-}
-
-fn resp200(content: &str, content_type: Option<&str>) -> String {
-    let content_type = content_type.unwrap_or("text/plain");
-    let content_len = content.len();
-    return format!(
-        "HTTP/1.1 200 OK\r\n\
-        Content-Type: {content_type}\r\n\
-        Content-Length: {content_len}\r\n\
-        \r\n\
-        {content}"
-    ).to_string();
-}
-
-fn resp404() -> String {
-    "HTTP/1.1 404 NOT FOUND\r\n\r\n".to_string()
-}
-
-#[derive(Debug)]
-enum HttpMethod {
-    GET,
-    POST,
-}
-
-#[derive(Debug)]
-struct Request {
-    http_method: HttpMethod,
-    path: String,
-    user_agent: Option<String>,
-    body: Option<String>,
-}
-
-fn parse_request(request_string: &str) -> Request {
-    // Typical request format
-    // GET /index.html HTTP/1.1
-    // Host: localhost:4221
-    // User-Agent: curl/7.64.1
-
-    let lines: Vec<&str> = request_string.split("\r\n")
-        .filter(|s| !s.is_empty())
-        .collect();
-    let m: HashMap<&str, &str> = lines[1..].iter().map(
-        |line|
-            line.trim().split(": ").collect())
-        .filter(
-            |line_parts: &Vec<&str>| {
-                debug_assert!(line_parts.len() == 2, "Invalid request line: {}", line_parts[0]);
-                return line_parts.len() == 2;
-            }
-        ).map(
-        |line_parts|
-            (line_parts[0].trim(), line_parts[1].trim())
-    ).collect();
-
-    let request_line: Vec<&str> = lines[0].split(" ").collect();
-    let http_method = match request_line[0] {
-        "GET" => HttpMethod::GET,
-        "POST" => HttpMethod::POST,
-        _ => panic!("Invalid HTTP method: {}", request_line[0]),
-    };
-    let path = request_line[1];
-
-
-    let user_agent = match m.get("User-Agent") {
-        Some(ua) => Some(ua.to_string()),
-        None => None,
-    };
-    let body = match http_method {
-        HttpMethod::GET => None,
-        HttpMethod::POST => match m.get("Content-Length") {
-            Some(content_length) => {
-                // let content_length = content_length.parse::<usize>()?;
-                // let mut body = String::new();
-                Some(lines.last().unwrap().to_string())
-            }
-            None => None,
-        },
-    };
-    return Request {
-        http_method,
-        path: path.to_string(),
-        user_agent,
-        body,
-    };
-}
+mod request;
+mod response;
 
 fn handle(stream: &mut TcpStream, directory: Option<String>) -> Result<(), Box<dyn Error>> {
     let mut buffer = [0; 1024];
@@ -99,7 +15,7 @@ fn handle(stream: &mut TcpStream, directory: Option<String>) -> Result<(), Box<d
     let result_string = std::str::from_utf8(&buffer[..read_result])?;
 
     println!("Request: {}", result_string);
-    let request = parse_request(result_string);
+    let request = request::parse_request(result_string);
     println!("Parsed request: {:?}", request);
     let response = match request.path.as_str() {
         "/" => {
@@ -112,16 +28,27 @@ fn handle(stream: &mut TcpStream, directory: Option<String>) -> Result<(), Box<d
             println!("Path start {}", path_start);
             match path_start {
                 "echo" => {
-                    resp200(params[0], None)
+                    response::resp200(Response {
+                        status_code: 200,
+                        content: params[0].to_string(),
+                        content_type: None,
+                        encoding: request.encoding,
+                    })
                 }
                 "user-agent" => {
                     println!("User-Agent: {:?}", request.user_agent);
                     match request.user_agent {
                         Some(ua) => {
-                            resp200(ua.as_str(), None)
+                            response::resp200(
+                                Response {
+                                    status_code: 200,
+                                    content: ua.to_string(),
+                                    content_type: None,
+                                    encoding: None,
+                                })
                         }
                         None => {
-                            resp404()
+                            response::resp404()
                         }
                     }
                 }
@@ -131,28 +58,35 @@ fn handle(stream: &mut TcpStream, directory: Option<String>) -> Result<(), Box<d
                         HttpMethod::GET => {
                             match fs::read_to_string(file_path) {
                                 Ok(file_contents) => {
-                                    resp200(file_contents.as_str(), Some("application/octet-stream"))
+                                    response::resp200(
+                                        Response {
+                                            status_code: 200,
+                                            content: file_contents.to_string(),
+                                            content_type: Some("application/octet-stream".to_string()),
+                                            encoding: None,
+                                        }
+                                    )
                                 }
                                 Err(err) => {
                                     println!("Error reading file: {}", err);
-                                    resp404()
+                                    response::resp404()
                                 }
                             }
                         }
                         HttpMethod::POST => {
                             match fs::write(file_path, request.body.unwrap()) {
                                 Ok(_) => {
-                                    resp201()
+                                    response::resp201()
                                 }
                                 Err(err) => {
                                     println!("Error writing file: {}", err);
-                                    resp404()
+                                    response::resp404()
                                 }
                             }
                         }
                     }
                 }
-                _ => { resp404() }
+                _ => { response::resp404() }
             }
         }
     };
